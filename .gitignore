@@ -1,0 +1,64 @@
+# ============================================
+# Laravel 11 - .gitignore
+# Proyecto: TrackGPX-Arrendadora-Backend
+# ============================================
+
+# Dependencias
+/vendor
+/node_modules
+
+# Entornos y claves
+.env
+.env.backup
+.env.testing
+.env.local
+.phpunit.result.cache
+
+# Archivos de caché y compilados
+/bootstrap/cache/*.php
+/storage/*.key
+/storage/logs/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+
+# Archivos temporales y de colas
+/storage/app/public/*
+!/storage/app/public/.gitignore
+
+# Backups, dumps y exportaciones
+*.sql
+*.sqlite
+*.bak
+*.backup
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Archivos de IDEs y entornos locales
+/.idea
+/.vscode
+*.sublime-project
+*.sublime-workspace
+
+# Composer & npm logs
+composer.lock
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Cache de Laravel Horizon o Telescope
+/.horizon
+/.telescope
+
+# Otros
+/public/storage
+/public/hot
+/public/build
+
+# Cobertura de pruebas y reportes
+/coverage
+/tests/_output
+
