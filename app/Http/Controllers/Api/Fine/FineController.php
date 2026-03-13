@@ -19,30 +19,51 @@ class FineController extends AppBaseController
     {
         $user = auth()->user();
 
-        $query = Fine::with('vehicle') // Traemos el vehículo asociado
+        $query = Fine::with([
+            'vehicle:id,name,plate',
+            'vehicle.leaseContracts' => fn($q) => $q
+                ->whereIn('status', ['active', 'past_due', 'legal_process'])
+                ->select('id', 'vehicle_id', 'account_id', 'contract_number', 'monthly_amount', 'status'),
+            'vehicle.leaseContracts.account:id,name,email',
+            'vehicle.leaseContracts.account.customerProfile:account_id,phone_primary,rfc',
+        ])
             ->where('company_id', $user->company_id);
 
-        // Filtro rápido: Pendientes vs Pagadas
-        if ($request->has('status') && $request->status !== 'all') {
+        // Filtro por status
+        if ($request->filled('status') && $request->status !== 'all') {
             $query->where('status', $request->status);
+        }
+
+        // Búsqueda por placa o referencia
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('reference', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhereHas(
+                        'vehicle',
+                        fn($v) =>
+                        $v->where('plate', 'like', "%{$search}%")
+                            ->orWhere('name',  'like', "%{$search}%")
+                    );
+            });
         }
 
         $fines = $query->orderBy('detected_at', 'desc')->get();
 
-        // Resumen de dinero pendiente (para mostrar arriba)
         $pendingAmount = Fine::where('company_id', $user->company_id)
             ->where('status', 'pending')
             ->sum('amount');
 
         return response()->json([
-            'data' => $fines,
+            'data'    => $fines,
             'summary' => [
-                'pending_count' => $fines->where('status', 'pending')->count(),
-                'pending_amount' => $pendingAmount
+                'pending_count'  => $fines->where('status', 'pending')->count(),
+                'paid_count'     => $fines->where('status', 'paid')->count(),
+                'pending_amount' => (float) $pendingAmount,
             ]
         ]);
     }
-
     // 2. MARCAR COMO PAGADA
     public function markAsPaid(Request $request, $id)
     {

@@ -14,12 +14,14 @@ class Geofence extends Model
         'name',
         'type',
         'coordinates',
-        'radius'
+        'radius',
+        'category'
     ];
 
     protected $casts = [
         'coordinates' => 'array',
-        'radius' => 'float'
+        'radius' => 'float',
+        'category' => 'string'
     ];
 
     public function vehicles()

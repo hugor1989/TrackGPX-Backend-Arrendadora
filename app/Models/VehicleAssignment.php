@@ -10,7 +10,7 @@ class VehicleAssignment extends Model
 
     protected $fillable = [
         'vehicle_id',
-        'driver_id',
+        'account_id',
         'assigned_from',
         'assigned_to',
         'active'
@@ -29,6 +29,11 @@ class VehicleAssignment extends Model
 
     public function driver()
     {
-        return $this->belongsTo(DriverProfile::class);
+        return $this->belongsTo(CustomerProfile::class);
+    }
+     // ESTA RELACIÓN FALTA
+    public function account()
+    {
+        return $this->belongsTo(Account::class, 'account_id');
     }
 }

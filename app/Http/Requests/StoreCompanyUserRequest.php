@@ -2,6 +2,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreCompanyUserRequest extends FormRequest
 {
@@ -19,7 +20,18 @@ class StoreCompanyUserRequest extends FormRequest
             'phone' => 'nullable|string',
             'position' => 'nullable|string|max:120',
             'timezone' => 'nullable|string|max:100',
-            'role' => 'nullable|string' // slug del role a asignar
+            'role' => [
+            'required', // Cambiado a required si siempre debe tener uno
+            'string',
+                Rule::in([
+                    'super_admin',
+                    'company_admin',
+                    'risk_analyst',
+                    'collection_manager',
+                    'sales_executive',
+                    'customer'
+                ]),
+            ]
         ];
     }
 }

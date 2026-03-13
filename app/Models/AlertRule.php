@@ -16,8 +16,9 @@ class AlertRule extends Model
         'geofence_id',
         'value',
         'notification_settings',
-        'schedule_settings', // <--- Nuevo campo
+        'schedule_settings',
         'is_active',
+        'priority',
     ];
 
     protected $casts = [

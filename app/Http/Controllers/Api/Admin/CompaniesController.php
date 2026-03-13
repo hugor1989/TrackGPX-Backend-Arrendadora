@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;  // ← Agregar esta línea
 use Illuminate\Support\Facades\Auth;
-
+use Illuminate\Support\Facades\Log;
 
 
 class CompaniesController extends AppBaseController
@@ -274,7 +274,7 @@ class CompaniesController extends AppBaseController
 
             // Validación
             $request->validate([
-                'logo' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048', // 2MB max
+                'logo' => 'required|image|mimes:jpeg,png,jpg,gif|max:10240', // 2MB max
             ]);
 
             // Eliminar logo anterior si existe

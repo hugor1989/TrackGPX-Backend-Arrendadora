@@ -18,14 +18,19 @@ class TraccarCommandService
         $this->pass    = config('services.traccar.pass');
     }
 
+    /**
+     * Motor central de envío de comandos
+     */
     public function sendCommand(int $traccarDeviceId, string $type, array $attributes = []): array
     {
         try {
             $response = Http::withBasicAuth($this->user, $this->pass)
+                ->timeout(15) 
+                ->retry(2, 200) 
                 ->post("{$this->baseUrl}/api/commands/send", [
                     'deviceId'   => $traccarDeviceId,
                     'type'       => $type,
-                    'attributes' => (object) $attributes, // ← cast a objeto, no array
+                    'attributes' => (object) $attributes,
                 ]);
 
             if ($response->successful()) {
@@ -33,36 +38,80 @@ class TraccarCommandService
                 return ['success' => true, 'data' => $response->json()];
             }
 
-            Log::error("Error enviando comando: {$type}", ['response' => $response->body()]);
-            return ['success' => false, 'error' => $response->body()];
+            if ($response->status() === 400) {
+                return ['success' => false, 'error' => 'Dispositivo fuera de línea o comando no soportado'];
+            }
 
+            Log::error("Error en servidor Traccar: {$type}", ['status' => $response->status()]);
+            return ['success' => false, 'error' => "Error servidor Traccar: " . $response->status()];
         } catch (\Exception $e) {
-            Log::error("Excepción enviando comando: " . $e->getMessage());
+            Log::error("Excepción en TraccarService: " . $e->getMessage());
             return ['success' => false, 'error' => $e->getMessage()];
         }
     }
 
-    // Cortar motor
+    // --- COMANDOS ESTÁNDAR ---
+
     public function engineStop(int $traccarDeviceId): array
     {
         return $this->sendCommand($traccarDeviceId, 'engineStop');
     }
 
-    // Reactivar motor
     public function engineResume(int $traccarDeviceId): array
     {
         return $this->sendCommand($traccarDeviceId, 'engineResume');
     }
 
-    // Solicitar posición ahora
-    public function requestPosition(int $traccarDeviceId): array
+    // --- COMANDOS ESPECÍFICOS VL103M (Protocolo Jimi/Concox) ---
+
+    /**
+     * Modo Recuperación: Tracking cada X segundos 
+     * TIMER,ON,10,3600# -> 10s mov, 1h detenido
+     */
+    public function setRecoveryFrequency(int $traccarDeviceId, int $seconds = 10): array
     {
-        return $this->sendCommand($traccarDeviceId, 'positionSingle');
+        return $this->sendCommand($traccarDeviceId, 'custom', [
+            'data' => "TIMER,ON,{$seconds},3600#"
+        ]);
     }
 
-    // Reiniciar dispositivo
+    /**
+     * Modo Normal: Restaura frecuencia estándar para ahorro de datos
+     */
+    public function setNormalFrequency(int $traccarDeviceId): array
+    {
+        return $this->sendCommand($traccarDeviceId, 'custom', [
+            'data' => "TIMER,ON,180,3600#" // 3 minutos en movimiento
+        ]);
+    }
+
+    /**
+     * Alerta de Jammer: Activa la detección de bloqueadores de señal [cite: 105, 296]
+     */
+    public function enableJammerDetection(int $traccarDeviceId): array
+    {
+        return $this->sendCommand($traccarDeviceId, 'custom', [
+            'data' => "JAMMER,1,10,10#" // Sensibilidad estándar
+        ]);
+    }
+
+    /**
+     * Sensibilidad de Vibración: Para detectar si el auto es golpeado o remolcado 
+     */
+    public function setVibrationAlarm(int $traccarDeviceId, int $level = 2): array
+    {
+        return $this->sendCommand($traccarDeviceId, 'custom', [
+            'data' => "SENALM,ON,{$level}#"
+        ]);
+    }
+
+    /**
+     * Reinicio de Hardware: Útil si el GPS se queda "congelado"
+     */
     public function reboot(int $traccarDeviceId): array
     {
-        return $this->sendCommand($traccarDeviceId, 'reboot');
+        return $this->sendCommand($traccarDeviceId, 'custom', [
+            'data' => "RESET#"
+        ]);
     }
 }

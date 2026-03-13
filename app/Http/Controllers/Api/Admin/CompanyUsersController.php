@@ -12,6 +12,7 @@ use App\Models\Role;
 use App\Models\AccountRole;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CompanyUsersController extends Controller
 {
@@ -29,7 +30,7 @@ class CompanyUsersController extends Controller
             'data' => $users
         ]);
     } */
-   public function index(Request $request)
+    public function index(Request $request)
     {
         // 1. Obtener el usuario autenticado (Account)
         $currentUser = $request->user();
@@ -43,7 +44,7 @@ class CompanyUsersController extends Controller
         }
 
         // 3. Usar el company_id del usuario logueado para filtrar
-        $users = CompanyUser::with(['account:id,email,status']) // Traemos datos clave de la cuenta
+        $users = CompanyUser::with(['account:id,email,status,role']) // Traemos datos clave de la cuenta
             ->where('company_id', $currentUser->company_id)
             ->orderBy('created_at', 'desc') // Opcional: ordenar por más recientes
             ->paginate(10);
@@ -52,7 +53,7 @@ class CompanyUsersController extends Controller
             'success' => true,
             // Si usas paginate(), Laravel devuelve 'data', 'links', 'meta' automáticamente.
             // A veces es mejor devolver el objeto paginado completo o solo 'data' según tu front.
-            'data' => $users->items(), 
+            'data' => $users->items(),
             'pagination' => [
                 'total' => $users->total(),
                 'per_page' => $users->perPage(),
@@ -69,6 +70,8 @@ class CompanyUsersController extends Controller
     {
         DB::beginTransaction();
 
+        Log::info('ROLE REQUEST', ['role' => $request->role]);
+
         try {
             // 1️⃣ Crear cuenta madre
             $account = Account::create([
@@ -76,7 +79,8 @@ class CompanyUsersController extends Controller
                 'name'       => $request->name,
                 'email'      => $request->email,
                 'password'   => Hash::make($request->password),
-                'status'     => 'active'
+                'status'     => 'active',
+                'role'       => $request->role
             ]);
 
             // 2️⃣ Crear el registro company_user
@@ -109,7 +113,6 @@ class CompanyUsersController extends Controller
                     'company_user' => $user
                 ]
             ], 201);
-
         } catch (\Throwable $e) {
             DB::rollBack();
             return response()->json([
@@ -178,7 +181,6 @@ class CompanyUsersController extends Controller
                 'success' => true,
                 'message' => 'Usuario actualizado exitosamente'
             ]);
-
         } catch (\Throwable $e) {
             DB::rollBack();
 

@@ -23,7 +23,6 @@ class Vehicle extends Model
         'model',
         'year',
         'plate',
-        'driver_id',
         'insurance_company',
         'policy_number',
         'policy_expiry',
@@ -61,15 +60,16 @@ class Vehicle extends Model
     /**
      * Conductor activo actual (relación directa a DriverProfile).
      */
-    public function driver()
+    public function customer()
     {
+        // Ahora la relación es directa a Account a través de la pivote limpia
         return $this->hasOneThrough(
-            DriverProfile::class,         // Modelo final
-            VehicleAssignment::class,     // Modelo intermedio
-            'vehicle_id',                 // FK en VehicleAssignment
-            'id',                         // PK en DriverProfile
-            'id',                         // PK en Vehicle
-            'driver_id'                   // FK en VehicleAssignment
+            Account::class,
+            VehicleAssignment::class,
+            'vehicle_id', // FK en pivote
+            'id',         // PK en accounts
+            'id',         // PK en vehicles
+            'account_id'  // FK en pivote
         )->where('vehicle_assignments.active', true);
     }
 
@@ -106,5 +106,22 @@ class Vehicle extends Model
     {
         return $this->hasOne(\App\Models\Position::class)
             ->latest('timestamp');
+    }
+
+    public function leaseContracts()
+    {
+        // Asumiendo que tu modelo de contrato se llama LeaseContract
+        // y que la llave foránea en esa tabla es vehicle_id
+        return $this->hasMany(LeaseContract::class, 'vehicle_id');
+    }
+
+    public function currentLease()
+    {
+        return $this->hasOne(LeaseContract::class, 'vehicle_id')->latest();
+    }
+
+    public function currentCustomer()
+    {
+        return $this->hasOneThrough(Account::class, LeaseContract::class, 'vehicle_id', 'id', 'id', 'account_id');
     }
 }

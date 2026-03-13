@@ -15,37 +15,176 @@ use Illuminate\Validation\ValidationException;
 
 class VehicleController extends Controller
 {
+
+
     /**
-     * Obtener todos los vehículos de la empresa
-     * GET /api/vehicles
+     * Obtener todos los vehículos con su cliente (Account) actual
      */
     public function index()
     {
         try {
             $vehicles = auth()->user()->company->vehicles()
                 ->with([
-                    'driver.account',
                     'device',
-                    'currentAssignment.driver.account',
+                    'currentAssignment.account',
                     'group',
-                    'lastPosition' // ← agregar esto
+                    'lastPosition',
+                    // ← NUEVO: contrato activo/vencido para colorear el mapa
+                    'leaseContracts' => fn($q) => $q
+                        ->whereIn('status', ['active', 'past_due', 'legal_process'])
+                        ->orderByRaw("FIELD(status, 'legal_process', 'past_due', 'active')")
+                        ->limit(1)
+                        ->select('id', 'vehicle_id', 'status'),
                 ])
                 ->orderBy('created_at', 'desc')
                 ->get()
                 ->map(function ($vehicle) {
+
                     $pos = $vehicle->lastPosition;
 
-                    // Inyectar campos de posición directamente en el vehículo
-                    $vehicle->latitude  = $pos->latitude ?? null;
+                    $vehicle->latitude  = $pos->latitude  ?? null;
                     $vehicle->longitude = $pos->longitude ?? null;
-                    $vehicle->speed     = $pos->speed ?? 0;
-                    $vehicle->heading   = $pos->heading ?? 0;
-                    $vehicle->last_gps  = $pos?->timestamp
+                    $vehicle->speed     = $pos->speed     ?? 0;
+                    $vehicle->heading   = $pos->heading   ?? 0;
+
+                    $vehicle->last_gps = $pos?->timestamp
                         ? \Carbon\Carbon::parse($pos->timestamp)->diffForHumans()
                         : 'Sin señal';
 
+                    $vehicle->current_customer = $vehicle->currentAssignment?->account?->name;
+
+                    // ← NUEVO: status del contrato para colorear marcadores en el mapa
+                    $vehicle->lease_status = $vehicle->leaseContracts->first()?->status ?? 'no_contract';
+
                     return $vehicle;
                 });
+
+            return response()->json([
+                'success' => true,
+                'data'    => $vehicles,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Crear un nuevo vehículo (Sin driver_id)
+     */
+    public function store(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'name' => 'required|string|max:255',
+                'plate' => 'required|string|max:50',
+                'vin' => 'nullable|string|max:17',
+                'type' => 'nullable|string|max:50',
+                'brand' => 'nullable|string|max:100',
+                'model' => 'nullable|string|max:100',
+                'year' => 'nullable|integer|min:1900',
+                'odometer' => 'nullable|numeric|min:0',
+                'status' => 'nullable|in:active,inactive,maintenance',
+                'account_id' => 'nullable|exists:accounts,id', // Cambiado driver por account
+            ]);
+
+            $validated['company_id'] = auth()->user()->company_id;
+
+            DB::beginTransaction();
+            $vehicle = Vehicle::create($validated);
+
+            if (!empty($validated['account_id'])) {
+                VehicleAssignment::create([
+                    'vehicle_id' => $vehicle->id,
+                    'account_id' => $validated['account_id'],
+                    'assigned_from' => now(),
+                    'active' => true,
+                ]);
+            }
+            DB::commit();
+
+            return response()->json(['success' => true, 'data' => $vehicle->load('currentAssignment.account')], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Asignar Cliente (Account) a vehículo
+     * Reemplaza la lógica vieja de assignDriver
+     */
+    public function assignCustomer(Request $request, $id)
+    {
+        try {
+            $vehicle = auth()->user()->company->vehicles()->findOrFail($id);
+
+            $validated = $request->validate([
+                'account_id' => 'required|exists:accounts,id',
+            ]);
+
+            DB::beginTransaction();
+
+            // 1. Finalizar asignación actual del vehículo
+            VehicleAssignment::where('vehicle_id', $vehicle->id)
+                ->where('active', true)
+                ->update(['assigned_to' => now(), 'active' => false]);
+
+            // 2. Crear nueva asignación con Account
+            $assignment = VehicleAssignment::create([
+                'vehicle_id' => $vehicle->id,
+                'account_id' => $validated['account_id'],
+                'assigned_from' => now(),
+                'active' => true,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cliente asignado correctamente',
+                'data' => $assignment->load('account')
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Desasignar Cliente
+     */
+    public function unassignCustomer($id)
+    {
+        try {
+            VehicleAssignment::where('vehicle_id', $id)
+                ->where('active', true)
+                ->update(['assigned_to' => now(), 'active' => false]);
+
+            return response()->json(['success' => true, 'message' => 'Cliente desasignado']);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function availableVehicles(Request $request)
+    {
+        try {
+            // Obtenemos la empresa del usuario logueado en TrackGPX
+            $companyId = $request->user()->company_id;
+
+            $vehicles = Vehicle::where('company_id', $companyId)
+                // Filtro: Vehículos que NO tengan un contrato activo o vencido
+                ->whereDoesntHave('leaseContracts', function ($query) {
+                    $query->whereIn('status', ['active', 'past_due']);
+                })
+                // Opcional: También podrías filtrar que no tengan asignación de chofer activa
+                // ->whereDoesntHave('currentAssignment') 
+                ->select('id', 'name', 'plate', 'brand', 'model')
+                ->orderBy('name', 'asc')
+                ->get();
 
             return response()->json([
                 'success' => true,
@@ -54,7 +193,7 @@ class VehicleController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al obtener vehículos',
+                'message' => 'Error al obtener vehículos disponibles',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -67,91 +206,41 @@ class VehicleController extends Controller
     public function show($id)
     {
         try {
+            // Obtenemos el vehículo asegurando que pertenezca a la empresa del usuario
             $vehicle = auth()->user()->company->vehicles()
                 ->with([
-                    'driver.account',
-                    'device',
-                    'currentAssignment.driver.account'
+                    'device.simCard',             // Info del hardware y línea
+                    'currentLease.account',       // Contrato actual y la cuenta del cliente
+                    'currentCustomer.customerProfile', // Perfil detallado (teléfonos, dirección)
+                    'currentCustomer.riskScore',  // El score de riesgo (puntos y nivel)
+                    'lastPosition',               // Última ubicación conocida para el mapa
+                    'alertRules'                  // Reglas activas configuradas para este vehículo
                 ])
                 ->findOrFail($id);
+
+            // Opcional: Podemos añadir cálculos al vuelo si los necesitas en la vista
+            if ($vehicle->currentLease) {
+                $vehicle->currentLease->days_overdue = $vehicle->currentLease->calculateDaysOverdue();
+            }
 
             return response()->json([
                 'success' => true,
                 'data' => $vehicle
             ], 200);
-        } catch (\Exception $e) {
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Vehículo no encontrado',
-                'error' => $e->getMessage()
+                'message' => 'Vehículo no encontrado o no pertenece a su empresa.'
             ], 404);
-        }
-    }
-
-    /**
-     * Crear un nuevo vehículo
-     * POST /api/vehicles
-     */
-    public function store(Request $request)
-    {
-        try {
-            $validated = $request->validate([
-                'name' => 'required|string|max:255',
-                'plate' => 'required|string|max:50',
-                'vin' => 'nullable|string|max:17',
-                'type' => 'nullable|string|max:50',
-                'brand' => 'nullable|string|max:100',
-                'model' => 'nullable|string|max:100',
-                'year' => 'nullable|integer|min:1900|max:' . (date('Y') + 1),
-                'odometer' => 'nullable|integer|min:0',
-                'status' => 'nullable|in:active,inactive,maintenance',
-                'driver_id' => 'nullable|exists:drivers,id',
-            ]);
-
-            // Agregar company_id
-            $validated['company_id'] = auth()->user()->company_id;
-            $validated['status'] = $validated['status'] ?? 'active';
-
-            DB::beginTransaction();
-
-            // Crear vehículo
-            $vehicle = Vehicle::create($validated);
-
-            // Si se asignó un conductor, crear el registro de asignación
-            if (!empty($validated['driver_id'])) {
-                VehicleAssignment::create([
-                    'vehicle_id' => $vehicle->id,
-                    'driver_id' => $validated['driver_id'],
-                    'assigned_from' => now(),
-                    'active' => true,
-                ]);
-            }
-
-            DB::commit();
-
-            // Recargar con relaciones
-            $vehicle->load(['driver.account', 'device', 'currentAssignment']);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Vehículo creado correctamente',
-                'data' => $vehicle
-            ], 201);
-        } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error de validación',
-                'errors' => $e->errors()
-            ], 422);
         } catch (\Exception $e) {
-            DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'Error al crear vehículo',
+                'message' => 'Error al obtener los detalles del vehículo',
                 'error' => $e->getMessage()
             ], 500);
         }
     }
+
 
     /**
      * Actualizar un vehículo
